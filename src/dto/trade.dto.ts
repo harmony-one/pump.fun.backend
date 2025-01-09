@@ -1,6 +1,7 @@
 import {ApiProperty} from "@nestjs/swagger";
 import {Transform, Type} from "class-transformer";
-import {IsOptional, IsString} from "class-validator";
+import {IsEnum, IsOptional, IsString} from "class-validator";
+import {CandleInterval} from "../types";
 
 export class GetTradesDto {
   @ApiProperty({ type: String, required: false })
@@ -31,4 +32,32 @@ export class GetCandlesDto {
   @Type(() => String)
   @IsString()
   tokenAddress: string;
+
+  @ApiProperty({ type: Number, required: false })
+  @Type(() => String)
+  @IsString()
+  @IsOptional()
+  timestampFrom: number;
+
+  @ApiProperty({ type: Number, required: false })
+  @Type(() => String)
+  @IsString()
+  @IsOptional()
+  timestampTo: number;
+
+  @ApiProperty({ enum: [CandleInterval['1h'], CandleInterval['1d']], required: false })
+  @IsOptional()
+  interval?: CandleInterval;
+
+  @ApiProperty({ type: Number, required: false, default: '100' })
+  @Type(() => String)
+  @IsString()
+  @IsOptional()
+  limit: number;
+
+  @ApiProperty({ type: Number, required: false, default: '0' })
+  @Type(() => String)
+  @IsString()
+  @IsOptional()
+  offset: number;
 }

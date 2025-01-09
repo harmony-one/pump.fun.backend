@@ -51,11 +51,11 @@ export class LiquidityProvision {
 
   @ApiProperty()
   @Column({ type: 'decimal' })
-  amount0: string;
+  actualTokenAmount: string;
 
   @ApiProperty()
   @Column({ type: 'decimal' })
-  amount1: string;
+  actualAssetAmount: string;
 
   @ApiProperty()
   @Column({ type: 'bigint' })

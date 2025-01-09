@@ -1,5 +1,5 @@
 import {Injectable, Logger} from '@nestjs/common';
-import {DataSource, EntityManager, MoreThan} from "typeorm";
+import {DataSource, EntityManager, LessThan, MoreThan} from "typeorm";
 import {
     Comment,
     CompetitionEntity,
@@ -14,7 +14,7 @@ import {AddCommentDto, GetCommentsDto} from "./dto/comment.dto";
 import {GetTokenBalancesDto, GetTokenBurnsDto, GetTokensDto, GetTokenWinnersDto} from "./dto/token.dto";
 import {GetCandlesDto, GetTradesDto} from "./dto/trade.dto";
 import {UserService} from "./user/user.service";
-import {Candle} from "./types";
+import {Candle, CandleIntervalPgAlias} from "./types";
 import {GetWinnerLiquidityProvisionsDto} from "./dto/winner.liquidity.dto";
 import {GetCompetitionsDto} from "./dto/competition.dto";
 
@@ -27,6 +27,8 @@ export class AppService {
     ) {}
 
     async getComments(dto: GetCommentsDto){
+        const { sortingOrder = 'asc' } = dto
+
         return await this.dataSource.manager.find(Comment, {
             where: {
                 token: {
@@ -36,13 +38,22 @@ export class AppService {
             take: +dto.limit,
             skip: +dto.offset,
             order: {
-                createdAt: 'asc'
+                createdAt: sortingOrder
             }
         })
     }
 
     async getTokens(dto: GetTokensDto){
-        const { search, offset, limit, isWinner, sortingField, sortingOrder, competitionId } = dto
+        const {
+            search,
+            offset,
+            limit,
+            isWinner,
+            sortingField,
+            sortingOrder,
+            competitionId,
+            symbol
+        } = dto
         const query = this.dataSource.getRepository(Token)
           .createQueryBuilder('token')
           .leftJoinAndSelect('token.user', 'user')
@@ -59,6 +70,10 @@ export class AppService {
               .orWhere('LOWER(token.txnHash) = LOWER(:txnHash)', { txnHash: search })
         }
 
+        if(symbol) {
+            query.where('LOWER(symbol) = LOWER(:symbol)', { symbol })
+        }
+
         if(competitionId) {
             query.where('competition.competitionId = :competitionId', { competitionId })
         }
@@ -68,9 +83,17 @@ export class AppService {
         }
 
         if(sortingField && sortingOrder) {
-            query.orderBy({
-                [`"${sortingField}"`]: sortingOrder
-            })
+            if(sortingField === 'lastComment') {
+                query.leftJoinAndSelect('token.comments', 'comments')
+                query.orderBy(`comments.createdAt`, sortingOrder, 'NULLS LAST')
+            } else if(sortingField === 'lastTrade') {
+                query.leftJoinAndSelect('token.trades', 'trades')
+                query.orderBy(`trades.timestamp`, sortingOrder, 'NULLS LAST')
+            } else if(sortingField === 'timestamp' || sortingField === 'marketCap') {
+                query.orderBy({
+                    [`"${sortingField}"`]: sortingOrder
+                })
+            }
         } else {
             query.orderBy({
                 timestamp: 'DESC'
@@ -166,26 +189,58 @@ export class AppService {
     }
 
     async getCandles(dto: GetCandlesDto){
+        const {
+            timestampFrom,
+            timestampTo,
+            tokenAddress,
+            interval = '1h',
+            offset = 0,
+            limit = 100
+        } = dto
+
+        const timeInterval = CandleIntervalPgAlias[interval] || 'hour'
+
         const query = this.dataSource.getRepository(Trade)
           .createQueryBuilder('trades')
           .leftJoin('trades.token', 'token')
           .select([
-            `DATE_TRUNC('minute', to_timestamp(trades.timestamp)) AS time`,
-            `MAX(trades.price)::text AS "highPrice"`,
-            `MIN(trades.price)::text AS "lowPrice"`,
-            `SUM(trades.amountIn)::text AS volume`
+            `DATE_TRUNC('${timeInterval}', to_timestamp(trades.timestamp)) AS time`,
+            `MAX(trades.price)::DOUBLE PRECISION AS "highPrice"`,
+            `MIN(trades.price)::DOUBLE PRECISION AS "lowPrice"`,
+            `SUM(
+                CASE
+                    WHEN trades.type = 'buy'
+                    THEN trades."amountIn"
+                    ELSE trades."amountOut"
+                END
+                )::text AS "volume"
+            `,
+            `(array_agg(trades.price ORDER BY trades."timestamp"))[1] AS "openPrice"`,
+            `(array_agg(trades.price ORDER BY trades."timestamp" desc))[1] AS "closePrice"`,
           ])
           .where({
               token: {
-                  address: dto.tokenAddress
+                  address: tokenAddress
               }
           })
-          .groupBy('time')
+          .groupBy(`time`)
           .orderBy({
-              time: 'DESC'
+              time: 'ASC'
           })
-          .offset(0)
-          .limit(100)
+          .offset(offset)
+          .limit(limit)
+
+        if(timestampFrom) {
+            query.andWhere({
+                timestamp: MoreThan(timestampFrom)
+            })
+        }
+
+        if(timestampTo) {
+            query.andWhere({
+                timestamp: LessThan(timestampTo)
+            })
+        }
 
         return await query.getRawMany<Candle[]>()
     }

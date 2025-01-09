@@ -92,3 +92,8 @@ flyctl secrets set <secret_name> <secret_value>
 
 flyctl deploy --ha=false
 ```
+
+Updating staging backend:
+```shell
+flyctl deploy --config fly.staging.toml --ha=false
+```

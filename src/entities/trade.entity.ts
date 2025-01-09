@@ -16,7 +16,7 @@ class ColumnNumericTransformer {
     return data;
   }
   from(data: number): string {
-    return new Decimal(data).toFixed()
+    return data ? new Decimal(data).toFixed() : '0'
   }
 }
 

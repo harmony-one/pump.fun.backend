@@ -33,7 +33,7 @@ export class IndexerService {
   private readonly accountAddress: string
   private readonly tokenFactoryContract: Contract<ContractAbi>
   private readonly maxBlocksRange = 1000
-  private readonly maxBlocksBatchSize = 5
+  private readonly maxBlocksBatchSize = 20
 
   constructor(
     private configService: ConfigService,
@@ -248,7 +248,6 @@ export class IndexerService {
         token.marketCap = marketCapDecimal.toFixed(10)
 
         await tokenRepository.save(token)
-        this.logger.log(`Updated token balance [${type}]: userAddress=${userAddress}, balance=${holder.balance}, token total supply=${token.totalSupply}, token price: ${token.price}, marketCap=${token.marketCap}`)
       } catch (e) {
         this.logger.error(`Failed to process token holder balance [${type}]: tokenAddress=${tokenAddress}, userAddress=${userAddress}`, e)
         throw new Error(e);
@@ -273,8 +272,12 @@ export class IndexerService {
         token.price = price
         token.marketCap = marketCapDecimal.toFixed(10)
 
+        if(marketCapDecimal.lt(0)) {
+          this.logger.error(`Failed to index block=${blockNumber}: market cap < 0 (${marketCapDecimal.toFixed()}), token=${tokenAddress}, txnHash=${txnHash}, transactionIndex=${event.transactionIndex}, logIndex=${event.logIndex}`)
+          process.exit(1)
+        }
+
         await tokenRepository.save(token)
-        this.logger.log(`Updated token balance [${type}]: userAddress=${userAddress}, balance=${holder.balance}, token total supply=${token.totalSupply}, token price=${token.price}, , marketCap=${token.marketCap}`)
       } catch (e) {
         this.logger.error(`Failed to process token holder balance [${type}]: tokenAddress=${tokenAddress}, userAddress=${userAddress}`, e)
         throw new Error(e);
@@ -294,7 +297,13 @@ export class IndexerService {
         fee,
         timestamp
       });
-      this.logger.log(`Trade [${type}]: userAddress=${userAddress}, token=${tokenAddress}, amountIn=${amountIn}, amountOut=${amountOut}, fee=${fee}, timestamp=${timestamp}, txnHash=${txnHash}`)
+      this.logger.log(`[${
+        blockNumber
+      }] trade [${
+        type
+      }] userAddress=${
+        userAddress
+      }, token=${tokenAddress}, amountIn=${amountIn}, amountOut=${amountOut}, fee=${fee}, timestamp=${timestamp}, txnHash=${txnHash}, token total supply=${token.totalSupply}, token price=${token.price}, marketCap=${token.marketCap}`)
     } catch (e) {
       this.logger.error(`Failed to process trade [${type}]: userAddress=${userAddress}, token=${tokenAddress} txnHash=${txnHash}`, e)
       throw new Error(e);
@@ -308,7 +317,7 @@ export class IndexerService {
     const tokenAddress = (values['token'] as string).toLowerCase()
     const winnerTokenAddress = (values['winnerToken'] as string).toLowerCase()
     const burnedAmount = values['burnedAmount'] as bigint
-    const receivedETH = values['receivedETH'] as bigint
+    const fee = values['fee'] as bigint
     const mintedAmount = values['mintedAmount'] as bigint
     const timestamp = Number(values['timestamp'] as bigint)
 
@@ -339,10 +348,10 @@ export class IndexerService {
       winnerToken,
       timestamp,
       burnedAmount: String(burnedAmount),
-      receivedETH: String(receivedETH),
+      fee: String(fee),
       mintedAmount: String(mintedAmount),
     });
-    this.logger.log(`BurnTokenAndMintWinner: senderAddress=${senderAddress}, tokenAddress=${tokenAddress}, winnerTokenAddress=${winnerTokenAddress}, burnedAmount=${burnedAmount}, receivedETH=${receivedETH}, mintedAmount=${mintedAmount}, txnHash=${txnHash}`);
+    this.logger.log(`BurnTokenAndMintWinner: senderAddress=${senderAddress}, tokenAddress=${tokenAddress}, winnerTokenAddress=${winnerTokenAddress}, burnedAmount=${burnedAmount}, fee=${fee}, mintedAmount=${mintedAmount}, txnHash=${txnHash}`);
   }
 
   private async processWinnerLiquidityEvent(event: EventLog, transactionalEntityManager: EntityManager) {
@@ -354,8 +363,8 @@ export class IndexerService {
     const sender = (values['sender'] as string).toLowerCase()
     const tokenId = String(values['tokenId'] as bigint)
     const liquidity = String(values['liquidity'] as bigint)
-    const amount0 = String(values['amount0'] as bigint)
-    const amount1 = String(values['amount1'] as bigint)
+    const actualTokenAmount = String(values['actualTokenAmount'] as bigint)
+    const actualAssetAmount = String(values['actualAssetAmount'] as bigint)
     const timestamp = Number(values['timestamp'] as bigint)
 
     const token = await this.appService.getTokenByAddress(tokenAddress, transactionalEntityManager)
@@ -380,11 +389,11 @@ export class IndexerService {
       sender,
       tokenId,
       liquidity,
-      amount0,
-      amount1,
+      actualTokenAmount,
+      actualAssetAmount,
       timestamp,
     });
-    this.logger.log(`WinnerLiquidityAdded: tokenAddress=${tokenAddress}, tokenCreator=${tokenCreatorAddress}, pool=${pool}, liquidity=${liquidity}, amount0=${amount0}, timestamp=${timestamp}, amount1=${amount1}, txnHash=${txnHash}`);
+    this.logger.log(`WinnerLiquidityAdded: tokenAddress=${tokenAddress}, tokenCreator=${tokenCreatorAddress}, pool=${pool}, liquidity=${liquidity}, actualTokenAmount=${actualTokenAmount}, actualAssetAmount=${actualAssetAmount}, timestamp=${timestamp}, txnHash=${txnHash}`);
   }
 
   private async processNewCompetitionEvent(event: EventLog, transactionalEntityManager: EntityManager) {
@@ -513,16 +522,16 @@ export class IndexerService {
         toBlock = blockchainBlockNumber
       }
 
-      if(toBlock - fromBlock >= 1) {
-        const delta = toBlock - fromBlock
+      const delta = toBlock - fromBlock
+      if(delta >= 1) {
         const numberOfBatches = Math.ceil(delta / this.maxBlocksRange)
 
         const protocolEventsBatch = await Promise.all(
           new Array(numberOfBatches)
             .fill(null)
-            .map(async (_, index, arr) => {
+            .map(async (_, index) => {
               const batchFromBlock = fromBlock + index * this.maxBlocksRange
-              const batchToBlock = Math.min(batchFromBlock + this.maxBlocksRange, toBlock)
+              const batchToBlock = Math.min(batchFromBlock + this.maxBlocksRange - 1, toBlock)
               return await this.getEventsFromBlocksRange(batchFromBlock, batchToBlock)
             })
         )

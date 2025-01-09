@@ -38,7 +38,7 @@ export class TokenBurn {
 
   @ApiProperty()
   @Column({ type: 'decimal' })
-  receivedETH: string;
+  fee: string;
 
   @ApiProperty()
   @Column({ type: 'decimal' })
